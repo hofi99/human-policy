@@ -3,3 +3,7 @@ tasks:
     file: h1_inspire_sim.yml
     name: H1 7DoF + 6DoF Hand (Sim)
     img: h1_inspire.png
+  g1_dex3_sim:
+    file: g1_dex3_sim.yml
+    name: G1 7DoF + 7DoF Dex3 Hand (Sim)
+    img: h1_inspire.png

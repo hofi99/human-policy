@@ -6,6 +6,11 @@ RETARGETTING_INDICES = [0, 4, 9, 14, 19, 24]
 # 0 indices are set at the origin of palm, which is always zero
 VALID_RETARGETTING_INDICES = [4, 9, 14, 19, 24]
 
+# Dex3 (3-finger) hand indices - used for G1 robot with Dex3 hands
+DEX3_RETARGETTING_INDICES = [0, 4, 9, 14]
+# 0 indices are set at the origin of palm, which is always zero
+DEX3_VALID_RETARGETTING_INDICES = [4, 9, 14]
+
 # ===== Robot Controller INDICES =====
 CONTROLLER_UPPERBODY_INDICES = [*range(13, 20), 20, 22, 24, 26, 28, 29, *range(32, 39), 39, 41, 43, 45, 47, 48]
 
@@ -29,6 +34,28 @@ H1_QPOS_RIGHT_ELBOW_INDICES = [13, 14, 15, 16]
 H1_QPOS_RIGHT_WRIST_INDICES = [17, 18, 19]
 H1_QPOS_RIGHT_ARM_INDICES = H1_QPOS_RIGHT_ELBOW_INDICES + H1_QPOS_RIGHT_WRIST_INDICES
 H1_QPOS_RIGHT_HAND_INDICES = [20, 21, 22, 23, 24, 25]
+
+# ===== G1 URDF INDICES =====
+G1_HEAD_POS = [0.2, 0.0, 0.5]
+G1_ALL_INDICES = [i for i in range(43)]
+G1_BODY_INDICES = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+G1_LEFT_ARM_INDICES = [15, 16, 17, 18, 19, 20, 21]
+G1_RIGHT_ARM_INDICES = [29, 30, 31, 32, 33, 34, 35]
+G1_LEFT_HAND_INDICES = [22, 23, 24, 25, 26, 27, 28]
+G1_RIGHT_HAND_INDICES = [36, 37, 38, 39, 40, 41, 42]
+G1_MOTOR_INDICES = [15, 16, 17, 18, 19, 20, 21, 29, 30, 31, 32, 33, 34, 35] # 14 dim
+
+# ===== Real-robot Interface (28-dim) after truncating first 15 indices =====
+# G1 QPOS interface is 28-dim (vs H1's 26-dim) because G1 has 7 DOF per hand vs H1's 6 DOF per hand
+# After truncating first 15 indices (legs 0-11 + waist 12-14):
+# Left arm (15-21) → [0-6] (7 DOF)
+# Left hand (22-28) → [7-13] (7 DOF)
+# Right arm (29-35) → [14-20] (7 DOF)
+# Right hand (36-42) → [21-27] (7 DOF)
+G1_QPOS_LEFT_ARM_INDICES = [0, 1, 2, 3, 4, 5, 6]
+G1_QPOS_LEFT_HAND_INDICES = [7, 8, 9, 10, 11, 12, 13]
+G1_QPOS_RIGHT_ARM_INDICES = [14, 15, 16, 17, 18, 19, 20]
+G1_QPOS_RIGHT_HAND_INDICES = [21, 22, 23, 24, 25, 26, 27]
 
 # ===== HDT training state space indices (128-dim) =====
 # 9(position_3 +rotation_6) + 3 * 6 + 9 + 3 * 6 + 9 

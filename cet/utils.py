@@ -7,7 +7,9 @@ from pathlib import Path
 from pytorch3d.transforms import matrix_to_rotation_6d, rotation_6d_to_matrix
 from hdt.constants import RETARGETTING_INDICES, ACTION_STATE_VEC_SIZE, OUTPUT_LEFT_EEF,\
     OUTPUT_RIGHT_EEF, OUTPUT_HEAD_EEF, OUTPUT_LEFT_KEYPOINTS, OUTPUT_RIGHT_KEYPOINTS,\
-        QPOS_INDICES, ACTION_STATE_VEC_SIZE, H1_QPOS_LEFT_HAND_INDICES, H1_QPOS_RIGHT_HAND_INDICES
+        QPOS_INDICES, ACTION_STATE_VEC_SIZE, H1_QPOS_LEFT_HAND_INDICES, H1_QPOS_RIGHT_HAND_INDICES,\
+        G1_QPOS_LEFT_HAND_INDICES, G1_QPOS_RIGHT_HAND_INDICES
+from cet.dex_adapter import adapt_dex5_to_dex3_keypoints
 
 import torch
 def parse_id(base_dir, prefix):
@@ -215,6 +217,28 @@ def cmd_dict2policy(cmd_dict, qpos, src='h1_inspire', match_human=True, match_ro
 
     if src in ["h1_inspire", "h1_inspire_sim", "gr1_inspire_sim", "h1_2_inspire_cmu", "h1_2_inspire_sim"]:
         policy_states[:, QPOS_INDICES] = qpos[:, :]
+    elif src in ["g1", "g1_dex3_sim"]:
+        # G1 has 28-dim qpos (vs H1's 26-dim), but QPOS_INDICES is fixed at 26 for training compatibility
+        # Map G1's 28-dim to H1's 26-dim by selecting relevant joints:
+        # G1: left_arm[0-6], left_hand[7-13], right_arm[14-20], right_hand[21-27]
+        # H1: left_arm[0-6], left_hand[7-12], right_arm[13-19], right_hand[20-25]
+        # We preserve all arm DOF and take first 6 DOF of each hand (dropping index_1_joint per hand)
+        # This matches H1's structure where index_intermediate_joint is a mimic joint (not directly controlled)
+        qpos_dim = qpos.shape[1] if len(qpos.shape) > 1 else len(qpos)
+        if qpos_dim == 28:
+            # Semantic mapping: concatenate left_arm, left_hand[first 6], right_arm, right_hand[first 6]
+            # G1 hand structure: thumb[0-2], middle[0-1], index[0-1]
+            # We drop index_1_joint (intermediate/distal) to match H1's mimic joint structure
+            g1_to_h1_mapping = np.concatenate([
+                qpos[:, 0:7],      # left arm (7 DOF) - preserve all
+                qpos[:, 7:13],     # left hand first 6 DOF: thumb[0-2], middle[0-1], index[0] (drop index_1_joint)
+                qpos[:, 14:21],    # right arm (7 DOF) - preserve all
+                qpos[:, 21:27]     # right hand first 6 DOF: thumb[0-2], middle[0-1], index[0] (drop index_1_joint)
+            ], axis=1)
+            assert g1_to_h1_mapping.shape[1] == 26, f"Expected 26-dim, got {g1_to_h1_mapping.shape[1]}"
+            policy_states[:, QPOS_INDICES] = g1_to_h1_mapping
+        else:
+            policy_states[:, QPOS_INDICES] = qpos[:, :26]
     elif "human" in src:
         # Shifts actions by one
         policy_states[1:] = policy_action[:-1]
@@ -308,6 +332,56 @@ def policy2ctrl_cmd(policy_action):
     rel_right_hand_keypoints[:, RETARGETTING_INDICES] = right_hand_action
     
     return head_mat.squeeze(), rel_left_wrist_mat.squeeze(), rel_right_wrist_mat.squeeze(), rel_left_hand_keypoints.squeeze(), rel_right_hand_keypoints.squeeze()
+
+
+def policy2ctrl_cmd_dex3(policy_action, w_index=0.7, w_middle=0.3, w_ring=0.5, w_pinky=0.5):
+    '''
+    Wrapper function that converts policy action to control commands and adapts Dex5 keypoints to Dex3 format.
+    
+    This function is identical to policy2ctrl_cmd() but applies the Dex5-to-Dex3 adapter to hand keypoints
+    before returning. Use this for robots with Dex3 (3-finger) hands like the Unitree G1.
+    
+    Args:
+        policy_action: np.array, shape (num_timesteps, 128)
+        w_index: float, default 0.7
+            Weight for index finger when merging with middle finger
+        w_middle: float, default 0.3
+            Weight for middle finger when merging with index finger
+        w_ring: float, default 0.5
+            Weight for ring finger when merging with pinky finger
+        w_pinky: float, default 0.5
+            Weight for pinky finger when merging with ring finger
+    
+    Returns:
+        Same as policy2ctrl_cmd():
+        head_mat: np.array, shape (num_timesteps, 4, 4)
+        rel_left_wrist_mat: np.array, shape (num_timesteps, 4, 4)
+        rel_right_wrist_mat: np.array, shape (num_timesteps, 4, 4)
+        rel_left_hand_keypoints: np.array, shape (num_timesteps, 25, 3) [adapted to Dex3]
+        rel_right_hand_keypoints: np.array, shape (num_timesteps, 25, 3) [adapted to Dex3]
+    '''
+    # Get standard control commands
+    head_mat, rel_left_wrist_mat, rel_right_wrist_mat, rel_left_hand_keypoints, rel_right_hand_keypoints = \
+        policy2ctrl_cmd(policy_action)
+    
+    # Apply Dex5 to Dex3 adapter to hand keypoints
+    rel_left_hand_keypoints = adapt_dex5_to_dex3_keypoints(
+        rel_left_hand_keypoints,
+        w_index=w_index,
+        w_middle=w_middle,
+        w_ring=w_ring,
+        w_pinky=w_pinky
+    )
+    
+    rel_right_hand_keypoints = adapt_dex5_to_dex3_keypoints(
+        rel_right_hand_keypoints,
+        w_index=w_index,
+        w_middle=w_middle,
+        w_ring=w_ring,
+        w_pinky=w_pinky
+    )
+    
+    return head_mat, rel_left_wrist_mat, rel_right_wrist_mat, rel_left_hand_keypoints, rel_right_hand_keypoints
 
 
 def safe_as_quat(rotation):

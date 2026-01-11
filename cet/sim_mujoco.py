@@ -13,7 +13,7 @@ from multiprocessing import shared_memory
 import mujoco as mj
 
 from opentv.RobotController import RobotController
-from cet.utils import policy2ctrl_cmd, safe_as_quat, safe_from_quat
+from cet.utils import policy2ctrl_cmd, policy2ctrl_cmd_dex3, safe_as_quat, safe_from_quat
 
 ROBOT_POS = [0, 0, 1.6]
 ROBOT_POS_OFFSET = [0, 0, 0]  # For table-top manipulation
@@ -200,7 +200,11 @@ class MujocoSim:
                 asset_dir=self.root_path + "/assets", 
                 config_dir=self.root_path + "/configs"
             )
-            self.controller.load_config('h1_inspire_sim.yml') # Visualize sim data
+
+            if self.cfgs[self.cur_env]['name'] in ['g1', 'g1_dex3_sim']:
+                self.controller.load_config('g1_dex3_sim.yml') # Visualize sim data
+            else:
+                self.controller.load_config('h1_inspire_sim.yml') # Visualize sim data
     
     def create_envs(self):
         """Initialize multiple environments based on configurations files."""
@@ -330,6 +334,7 @@ class MujocoSim:
         robot_name = self.cfgs[self.cur_env]['name']
         is_gr1 = robot_name in ['gr1', 'gr1_inspire', 'gr1_inspire_sim']
         is_h1 = robot_name in ['h1_inspire', 'h1_2_inspire_cmu', 'h1_inspire_sim']
+        is_g1 = robot_name in ['g1', 'g1_dex3_sim']
         
         kp = np.full(self.robot_joint_ids.shape[0], 200)
         kd = np.full(self.robot_joint_ids.shape[0], 10)
@@ -348,6 +353,12 @@ class MujocoSim:
             kd[self.hand_indices] = 0.25
             self.model.jnt_stiffness[self.hand_indices] = 0
             # self.model.jnt_damping[self.hand_indices] = 1
+
+        # For G1, G1_dex3_sim: H1 hand gains
+        elif is_g1:
+            kp[self.hand_indices] = 20  # H1 hand gains
+            kd[self.hand_indices] = 0.25
+            self.model.jnt_stiffness[self.hand_indices] = 0
 
         # Apply Joint-space PD control
         self.set_torque_servo(np.arange(self.model.nu), 1)
@@ -405,6 +416,9 @@ class MujocoSim:
         robot_name = self.cfgs[self.cur_env]['name']
 
         if not init_state:# or init_qos is None:
+            # Check if robot uses Dex3 hands (G1 robot)
+            is_dex3_robot = robot_name in ['g1', 'g1_dex3_sim']
+            
             if robot_name in ['h1_inspire', 'h1_2_inspire_cmu', 'h1_inspire_sim']:
                 if action.shape[0] == 128:
                     ctrl_cmd = policy2ctrl_cmd(action[None, :])
@@ -461,11 +475,23 @@ class MujocoSim:
                     qpos[50:52] = action[23]
                     qpos[52] = action[24]
                     qpos[53:56] = action[25] * np.array([1, 1.6, 2.4])
+            elif is_dex3_robot:
+                # G1 robot with Dex3 hands
+                if action.shape[0] == 128:
+                    # Use Dex3 adapter to convert Dex5 keypoints to Dex3
+                    ctrl_cmd = policy2ctrl_cmd_dex3(action[None, :])
+                    self.controller.update(*ctrl_cmd)
+                    return self.controller.qpos, self.controller.head_rot_mat
+                else:
+                    raise ValueError(f"G1 robot expects 128-dim action, got {action.shape[0]}-dim")
             else:
                 raise ValueError(f"Unknown robot: {robot_name}")
 
         #! different robot need different init state, later add to config file
         else:
+            # Check if robot uses Dex3 hands (G1 robot)
+            is_dex3_robot = robot_name in ['g1', 'g1_dex3_sim']
+            
             if robot_name in ['h1_inspire', 'h1_2_inspire_cmu', 'h1_inspire_sim']:
                 init_state = np.zeros((51,))
                 init_state[13] = -0.5
@@ -484,6 +510,20 @@ class MujocoSim:
                 init_state[37] = -0.5
                 init_state[38] = -1
                 init_state[40] = -2
+                qpos = init_state
+                qpos = np.array(qpos, dtype=np.float32)
+            elif robot_name in ['g1', 'g1_dex3_sim']:
+                # G1 robot initial state (43 DOF: 29 body + 14 hand)
+                # Joint order: legs (0-11), waist (12-14), left arm (15-21), left hand (22-28), right arm (29-35), right hand (36-42)
+                init_state = np.zeros((43,))  # G1 has 43 DOF
+                # Left arm: shoulder_pitch=15, shoulder_roll=16, elbow=18
+                init_state[15] = -0.5  # left_shoulder_pitch
+                init_state[16] = 1     # left_shoulder_roll
+                init_state[18] = -2    # left_elbow
+                # Right arm: shoulder_pitch=29, shoulder_roll=30, elbow=32
+                init_state[29] = -0.5  # right_shoulder_pitch
+                init_state[30] = -1    # right_shoulder_roll
+                init_state[32] = -2    # right_elbow
                 qpos = init_state
                 qpos = np.array(qpos, dtype=np.float32)
             else:

@@ -73,10 +73,15 @@ def main(args, player, policy_rollout):
     """ Main function to evaluate the policy in the simulator """
     device = args['device']
     
+    # Detect robot type from player config
+    robot_name = player.cfgs[player.cur_env]['name']
+    is_g1 = robot_name in ['g1', 'g1_dex3_sim']
+    is_h1 = robot_name in ['h1_inspire', 'h1_2_inspire_cmu', 'h1_inspire_sim']
+    
     # Load initial dataset and model
     actions_gt, left_imgs, right_imgs, states, init_action, init_left_img, init_right_img = _load_hdf5(args['hdf_file_path'])
     if policy_rollout:
-        norm_stats = get_norm_stats(args['norm_stats_path'], embodiment_name="h1_inspire_sim")
+        norm_stats = get_norm_stats(args['norm_stats_path'], embodiment_name=robot_name)
         policy, visual_preprocessor = load_policy(args['model_path'], args['policy_config_path'], device)
     
     # Constants
@@ -91,17 +96,50 @@ def main(args, player, policy_rollout):
     act_index = 0
     
     predicted_list, gt_list, record_list = [], [], []
-        
-    # urdf_path = str(Path(__file__).resolve().parent.parent / "assets" / "h1_inspire" / "urdf" / "h1_inspire.urdf")
-    urdf_path = str(Path(__file__).resolve().parent.parent / "assets" / "h1_inspire_sim" / "urdf" / "h1_inspire.urdf")
-    # urdf_path = "/home/tairanh/Workspace/cross-embodiment-transformer/assets/h1_inspire/urdf/h1_inspire.urdf"
+    
+    # Select robot-specific constants and paths
+    if is_g1:
+        urdf_path = str(Path(__file__).resolve().parent.parent / "assets" / "g1_dex3_sim" / "urdf" / "g1_29dof_with_hand_rev_1_0.urdf")
+        left_arm_indices = hdt.constants.G1_LEFT_ARM_INDICES
+        right_arm_indices = hdt.constants.G1_RIGHT_ARM_INDICES
+        left_hand_indices = hdt.constants.G1_LEFT_HAND_INDICES
+        right_hand_indices = hdt.constants.G1_RIGHT_HAND_INDICES
+        left_wrist_name = "left_wrist_yaw_link"
+        right_wrist_name = "right_wrist_yaw_link"
+        all_indices = hdt.constants.G1_ALL_INDICES
+        body_offset = 15  # G1: legs (0-11) + waist (12-14) = 15
+        left_qpos_arm_indices = hdt.constants.G1_QPOS_LEFT_ARM_INDICES
+        right_qpos_arm_indices = hdt.constants.G1_QPOS_RIGHT_ARM_INDICES
+        left_qpos_hand_indices = hdt.constants.G1_QPOS_LEFT_HAND_INDICES
+        right_qpos_hand_indices = hdt.constants.G1_QPOS_RIGHT_HAND_INDICES
+    else:  # Default to H1
+        urdf_path = str(Path(__file__).resolve().parent.parent / "assets" / "h1_inspire_sim" / "urdf" / "h1_inspire.urdf")
+        left_arm_indices = hdt.constants.H1_LEFT_ARM_INDICES
+        right_arm_indices = hdt.constants.H1_RIGHT_ARM_INDICES
+        left_hand_indices = hdt.constants.H1_LEFT_HAND_INDICES
+        right_hand_indices = hdt.constants.H1_RIGHT_HAND_INDICES
+        left_wrist_name = "L_hand_base_link"
+        right_wrist_name = "R_hand_base_link"
+        all_indices = hdt.constants.H1_ALL_INDICES
+        body_offset = 13  # H1: body/legs (0-12) = 13
+        left_qpos_arm_indices = hdt.constants.H1_QPOS_LEFT_ARM_INDICES
+        right_qpos_arm_indices = hdt.constants.H1_QPOS_RIGHT_ARM_INDICES
+        left_qpos_hand_indices = hdt.constants.H1_QPOS_LEFT_HAND_INDICES
+        right_qpos_hand_indices = hdt.constants.H1_QPOS_RIGHT_HAND_INDICES
+    
     generator = FKCmdDictGenerator(
         urdf_path, 
-        hdt.constants.H1_LEFT_ARM_INDICES, 
-        hdt.constants.H1_RIGHT_ARM_INDICES, 
-        "L_hand_base_link", 
-        "R_hand_base_link", 
-        target_task_link_names
+        left_arm_indices, 
+        right_arm_indices, 
+        left_wrist_name, 
+        right_wrist_name, 
+        target_task_link_names,
+        left_hand_indices=left_hand_indices,
+        right_hand_indices=right_hand_indices,
+        left_qpos_arm_indices=left_qpos_arm_indices,
+        right_qpos_arm_indices=right_qpos_arm_indices,
+        left_qpos_hand_indices=left_qpos_hand_indices,
+        right_qpos_hand_indices=right_qpos_hand_indices
     )
     
     # Launch simulator viewer
@@ -142,7 +180,8 @@ def main(args, player, policy_rollout):
             cur_state_gt = states[t_gt]
             
             # Fetch qpos from sim and generate FK observations
-            cur_state = np.array(player.data.qpos[hdt.constants.H1_ALL_INDICES][13:]) #  38-dim: 7*2 arms, 12*2 fingers
+            # Extract qpos after body/leg/waist joints (robot-specific offset)
+            cur_state = np.array(player.data.qpos[all_indices][body_offset:]) # 28-dim for G1, 38-dim for H1
             # NOTE: head_mat is simply masked from training for now.
             fk_cmd_dict, _, _, _, _, _, _, _ = generator.generate_fk_obs(qpos=cur_state, head_mat=np.zeros((4, 4)), norm_qpos_to_urdf=False)
 
@@ -192,7 +231,8 @@ if __name__ == '__main__':
     parser.add_argument('--chunk_size', type=int, help='chunk size', default=64)
     parser.add_argument('--policy_config_path', type=str, help='policy config path', required=False)
     parser.add_argument('--plot', action='store_true')
-    parser.add_argument('--tasktype', type=str, help='Scene setup', required=True, choices=['microwave', 'tap', 'pour', 'pickplace', 'wiping', 'pepsi', 'h1_only'])
+    parser.add_argument('--tasktype', type=str, help='Scene setup', required=True, choices=['microwave', 'tap', 'pour', 'pickplace', 'wiping', 'pepsi', 'h1_only', 'g1_only'])
+    parser.add_argument('--robot', type=str, help='Robot configuration to use', default='h1_inspire_sim', choices=['h1_inspire_sim', 'g1_dex3_sim'])
     parser.add_argument('--device', type=str, help='Device', default="cuda")
     args = vars(parser.parse_args())
 
@@ -209,7 +249,11 @@ if __name__ == '__main__':
     config_path = root_path + "/configs/all_tasks.yml"
 
     task_config = yaml.safe_load(open(config_path, "r"))["tasks"]
-    config_files = [task_config["h1_inspire_sim"]["file"]]
+    # Robot selection is configurable via --robot command line argument
+    robot_key = args['robot']
+    if robot_key not in task_config:
+        robot_key = 'h1_inspire_sim'  # Fallback to H1 if invalid
+    config_files = [task_config[robot_key]["file"]]
 
     player = MujocoSim(config_files, root_path=root_path, task_id=0, tasktype=args['tasktype'], cfgs=None)
 

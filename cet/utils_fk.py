@@ -143,7 +143,11 @@ def convert_hand_actions_back(hand_actions, hand_lower_limit, hand_upper_limit):
 
 class FKCmdDictGenerator:
     def __init__(self, urdf_path: str, left_arm_indices: list, right_arm_indices: list, 
-                 left_wrist_name: str, right_wrist_name: str, target_task_link_names: list, hdf5_timestamps: list=None):
+                 left_wrist_name: str, right_wrist_name: str, target_task_link_names: list, 
+                 left_hand_indices: list = None, right_hand_indices: list = None,
+                 left_qpos_arm_indices: list = None, right_qpos_arm_indices: list = None,
+                 left_qpos_hand_indices: list = None, right_qpos_hand_indices: list = None,
+                 hdf5_timestamps: list=None):
         self.urdf_path = urdf_path
         self.left_arm_indices = left_arm_indices
         self.right_arm_indices = right_arm_indices
@@ -151,13 +155,21 @@ class FKCmdDictGenerator:
         self.right_wrist_name = right_wrist_name
         self.hdf5_timestamps = hdf5_timestamps
 
+        # Default to H1 indices if not provided (backward compatibility)
+        self.left_hand_indices = left_hand_indices if left_hand_indices is not None else hdt.constants.H1_LEFT_HAND_INDICES
+        self.right_hand_indices = right_hand_indices if right_hand_indices is not None else hdt.constants.H1_RIGHT_HAND_INDICES
+        self.left_qpos_arm_indices = left_qpos_arm_indices if left_qpos_arm_indices is not None else hdt.constants.H1_QPOS_LEFT_ARM_INDICES
+        self.right_qpos_arm_indices = right_qpos_arm_indices if right_qpos_arm_indices is not None else hdt.constants.H1_QPOS_RIGHT_ARM_INDICES
+        self.left_qpos_hand_indices = left_qpos_hand_indices if left_qpos_hand_indices is not None else hdt.constants.H1_QPOS_LEFT_HAND_INDICES
+        self.right_qpos_hand_indices = right_qpos_hand_indices if right_qpos_hand_indices is not None else hdt.constants.H1_QPOS_RIGHT_HAND_INDICES
+
         # for arm
         self.left_arm_interface = ArmInterface(self.urdf_path, self.left_arm_indices, self.left_wrist_name)
         self.right_arm_interface = ArmInterface(self.urdf_path, self.right_arm_indices, self.right_wrist_name)
 
         # for hand
-        self.left_hand_interface = HandInterface(self.urdf_path, hdt.constants.H1_LEFT_HAND_INDICES, target_task_link_names, self.left_wrist_name)
-        self.right_hand_interface = HandInterface(self.urdf_path, hdt.constants.H1_RIGHT_HAND_INDICES, target_task_link_names, self.right_wrist_name)
+        self.left_hand_interface = HandInterface(self.urdf_path, self.left_hand_indices, target_task_link_names, self.left_wrist_name)
+        self.right_hand_interface = HandInterface(self.urdf_path, self.right_hand_indices, target_task_link_names, self.right_wrist_name)
 
     def compute_arm_fk(self, left_qpos: np.ndarray, right_qpos: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         left_ee_pose = self.left_arm_interface.compute_ee_pose(left_qpos)
@@ -193,13 +205,13 @@ class FKCmdDictGenerator:
     
     def compute_fk(self, qpos: np.ndarray, norm_qpos_to_urdf: bool) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         # for arm
-        left_arm_qpos = qpos[hdt.constants.H1_QPOS_LEFT_ARM_INDICES]
-        right_arm_qpos = qpos[hdt.constants.H1_QPOS_RIGHT_ARM_INDICES]
+        left_arm_qpos = qpos[self.left_qpos_arm_indices]
+        right_arm_qpos = qpos[self.right_qpos_arm_indices]
         left_fk_pos, left_fk_rot, right_fk_pos, right_fk_rot = self.compute_arm_fk(left_arm_qpos, right_arm_qpos)
 
         # for hand
-        left_hand_qpos = qpos[hdt.constants.H1_QPOS_LEFT_HAND_INDICES]
-        right_hand_qpos = qpos[hdt.constants.H1_QPOS_RIGHT_HAND_INDICES]
+        left_hand_qpos = qpos[self.left_qpos_hand_indices]
+        right_hand_qpos = qpos[self.right_qpos_hand_indices]
         left_hand_ee_position, right_hand_ee_position = self.compute_hand_fk(left_hand_qpos, right_hand_qpos, norm_qpos_to_urdf)
 
         return left_fk_pos, left_fk_rot, right_fk_pos, right_fk_rot, left_hand_ee_position, right_hand_ee_position
