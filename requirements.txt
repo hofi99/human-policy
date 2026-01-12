@@ -18,7 +18,7 @@ diffusers
 timm
 wandb
 pytransform3d
-git+https://github.com/facebookresearch/pytorch3d.git@stable
+# git+https://github.com/facebookresearch/pytorch3d.git@stable # Installed separately via MiroPsota's prebuilt wheel for PyTorch 2.7.1 + CUDA 12.8
 git+https://github.com/RogerQi/maskclip_onnx
 pytest
 opentv
