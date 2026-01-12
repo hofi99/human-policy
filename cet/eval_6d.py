@@ -14,6 +14,27 @@ from hdt.modeling.utils import make_visual_encoder
 def get_norm_stats(data_path, embodiment_name="h1_inspire"):
     with open(data_path, "rb") as f:
         norm_stats = pickle.load(f)
+    
+    # Check if the requested embodiment name exists
+    if embodiment_name not in norm_stats:
+        available_keys = list(norm_stats.keys())
+        
+        # If G1 is requested but not found, try to find any H1 variant as fallback
+        if embodiment_name in ['g1', 'g1_dex3_sim']:
+            h1_fallback_key = 'h1_inspire_sim'
+            
+            print(f"Warning: G1 norm_stats not found. Using {h1_fallback_key} stats as fallback.")
+            print(f"Available keys: {available_keys}")
+            print(f"Note: This may cause suboptimal performance due to different action/state distributions.")
+            norm_stats = norm_stats[h1_fallback_key]
+            return norm_stats
+        
+        error_msg = (
+            f"Embodiment name '{embodiment_name}' not found in norm_stats.\n"
+            f"Available keys: {available_keys}\n"
+        )
+        raise KeyError(error_msg)
+    
     norm_stats = norm_stats[embodiment_name]
     return norm_stats
 

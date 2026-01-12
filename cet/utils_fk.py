@@ -113,26 +113,36 @@ class HandInterface:
         return retargeted_keypoints
 
     def generate_full_qpos(self, input_qpos: np.ndarray) -> np.ndarray:
-        if input_qpos.shape[0] != 6:
-            raise ValueError("Input qpos must have 6 elements.")
+        input_size = input_qpos.shape[0]
+        
+        # H1 case: 6 input DOF → 12 full DOF (with mimic joints)
+        if input_size == 6:
+            full_qpos = np.zeros(12)
 
-        full_qpos = np.zeros(12)
+            full_qpos[0] = input_qpos[0]   # 20
+            full_qpos[2] = input_qpos[1]   # 22
+            full_qpos[4] = input_qpos[2]   # 24
+            full_qpos[6] = input_qpos[3]   # 26
+            full_qpos[8] = input_qpos[4]   # 28
+            full_qpos[9] = input_qpos[5]   # 29
 
-        full_qpos[0] = input_qpos[0]   # 20
-        full_qpos[2] = input_qpos[1]   # 22
-        full_qpos[4] = input_qpos[2]   # 24
-        full_qpos[6] = input_qpos[3]   # 26
-        full_qpos[8] = input_qpos[4]   # 28
-        full_qpos[9] = input_qpos[5]   # 29
+            full_qpos[1] = full_qpos[0]                    # 21 mimics 20
+            full_qpos[3] = full_qpos[2]                    # 23 mimics 22
+            full_qpos[5] = full_qpos[4]                    # 25 mimics 24
+            full_qpos[7] = full_qpos[6]                    # 27 mimics 26
+            full_qpos[10] = 1.6 * full_qpos[9]             # 30 mimics 29 with multiplier 1.6
+            full_qpos[11] = 2.4 * full_qpos[9]             # 31 mimics 29 with multiplier 2.4
 
-        full_qpos[1] = full_qpos[0]                    # 21 mimics 20
-        full_qpos[3] = full_qpos[2]                    # 23 mimics 22
-        full_qpos[5] = full_qpos[4]                    # 25 mimics 24
-        full_qpos[7] = full_qpos[6]                    # 27 mimics 26
-        full_qpos[10] = 1.6 * full_qpos[9]             # 30 mimics 29 with multiplier 1.6
-        full_qpos[11] = 2.4 * full_qpos[9]             # 31 mimics 29 with multiplier 2.4
-
-        return full_qpos
+            return full_qpos
+        
+        # G1 case: 7 input DOF → 7 full DOF (no mimic joints needed, pass through)
+        elif input_size == 7:
+            # G1 has 7 DOF per hand: thumb[0-2], middle[0-1], index[0-1]
+            # The 7 DOF are already the full set, so just return as-is
+            return input_qpos.copy()
+        
+        else:
+            raise ValueError(f"Input qpos must have 6 elements (H1) or 7 elements (G1), got {input_size} elements.")
 
 # Step 3: for hand change into 0-1, we need to convert it back
 def convert_hand_actions_back(hand_actions, hand_lower_limit, hand_upper_limit):
