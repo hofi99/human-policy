@@ -99,7 +99,7 @@ def main(args, player, policy_rollout):
     
     # Select robot-specific constants and paths
     if is_g1:
-        urdf_path = str(Path(__file__).resolve().parent.parent / "assets" / "g1_dex3_sim" / "urdf" / "g1_29dof_with_hand_rev_1_0.urdf")
+        urdf_path = str(Path(__file__).resolve().parent.parent / "assets" / "g1_dex3_sim" / "urdf" / "g1_body29_hand14.urdf")
         left_arm_indices = hdt.constants.G1_LEFT_ARM_INDICES
         right_arm_indices = hdt.constants.G1_RIGHT_ARM_INDICES
         left_hand_indices = hdt.constants.G1_LEFT_HAND_INDICES

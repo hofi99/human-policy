@@ -3,7 +3,7 @@ robot_cfg:
   name: g1_dex3_sim
   
   # Path to URDF file
-  urdf_path: g1_dex3_sim/urdf/g1_29dof_with_hand_rev_1_0.urdf
+  urdf_path: g1_dex3_sim/urdf/g1_body29_hand14.urdf
   
   # Path to MJCF XML directory - used to load scene files
   # MuJoCo will look for {tasktype}_scene.xml in this directory
@@ -47,7 +47,7 @@ robot_cfg:
   # This defines which joints the arm RobotController computes
   # Body/leg joints (0-14) are controlled separately by body controller
   # Hand joints (22-28, 36-42) are computed separately by hand controller
-  # Note: In simulation, all 43 actuators (including hands) are controlled via PD control (line 358)
+  # Note: In simulation, all 43 actuators (including hands) are controlled via PD control
   # Hand joints receive different PD gains (kp=20, kd=0.25) and joint stiffness is set to 0 (same as H1)
   arm_motor_indices: [15, 16, 17, 18, 19, 20, 21, 29, 30, 31, 32, 33, 34, 35]
 
