@@ -233,122 +233,7 @@ class MujocoSim:
             self.dof_names.append(joint_names)   
             self.num_dof.append(self.robot_joint_ids.shape[0])      
 
-        # Build actuator-to-joint mapping for proper PD control
-        # This maps actuator indices to qpos/qvel addresses, ensuring correct control
-        # even when actuator order differs from joint order (e.g., G1 vs H1)
-        # Note: This mapping is based on the model structure (same for all envs),
-        # but act_to_cmd_idx will be rebuilt per environment in _build_cmd_mapping()
-        self.act_qadr = []  # actuator_id -> qpos address
-        self.act_dadr = []  # actuator_id -> qvel address (dof address)
-        self.act_to_joint_id = []  # actuator_id -> joint_id
-        
-        for act_id in range(self.model.nu):
-            # Get the joint ID that this actuator targets
-            j_id = int(self.model.actuator_trnid[act_id, 0])
-            # Get qpos and qvel addresses for this joint
-            qadr = int(self.model.jnt_qposadr[j_id])
-            dadr = int(self.model.jnt_dofadr[j_id])
-            self.act_qadr.append(qadr)
-            self.act_dadr.append(dadr)
-            self.act_to_joint_id.append(j_id)
-        
-        self.act_qadr = np.array(self.act_qadr, dtype=int)
-        self.act_dadr = np.array(self.act_dadr, dtype=int)
-        self.act_to_joint_id = np.array(self.act_to_joint_id, dtype=int)
-        
-        # Build cmd mapping for the current environment
-        self._build_cmd_mapping()
-        
-        # Optional: Verify mapping (set to True for debugging)
-        if False:  # Set to True to enable verification on startup
-            self.verify_actuator_mapping(verbose=True)
-
         print('Done creating envs')
-    
-    def _build_cmd_mapping(self):
-        """
-        Build mapping from actuator indices to cmd array indices.
-        This needs to be called whenever robot_joint_ids changes (e.g., when switching environments).
-        """
-        # Build mapping from joint_id to index in robot_joint_ids (for mapping cmd array)
-        # cmd[i] corresponds to joint robot_joint_ids[i]
-        joint_id_to_qpos_idx = {j_id: idx for idx, j_id in enumerate(self.robot_joint_ids)}
-        
-        # For each actuator, find the index in cmd array (qpos order) that corresponds to its joint
-        # This maps: actuator_id -> index in cmd array
-        self.act_to_cmd_idx = []
-        for act_id in range(self.model.nu):
-            j_id = self.act_to_joint_id[act_id]
-            if j_id in joint_id_to_qpos_idx:
-                self.act_to_cmd_idx.append(joint_id_to_qpos_idx[j_id])
-            else:
-                # If joint not in robot_joint_ids, use -1 as sentinel
-                self.act_to_cmd_idx.append(-1)
-        self.act_to_cmd_idx = np.array(self.act_to_cmd_idx, dtype=int)
-    
-    def verify_actuator_mapping(self, verbose=True):
-        """
-        Verify that the actuator-to-joint mapping is correct.
-        This can be used for debugging to ensure actuators map to the correct joints.
-        
-        Args:
-            verbose: If True, print detailed mapping information
-        
-        Returns:
-            bool: True if mapping appears valid, False otherwise
-        """
-        if not hasattr(self, 'act_qadr') or not hasattr(self, 'act_dadr'):
-            print("ERROR: Actuator mapping not initialized")
-            return False
-        
-        valid = True
-        
-        if verbose:
-            print("\n=== Actuator-to-Joint Mapping Verification ===")
-            print(f"Number of actuators: {self.model.nu}")
-            print(f"Number of robot joints: {len(self.robot_joint_ids)}")
-            print("\nActuator -> Joint mapping:")
-            for act_id in range(min(10, self.model.nu)):  # Print first 10
-                j_id = self.act_to_joint_id[act_id]
-                j_name = self.model.joint(j_id).name if j_id < self.model.njnt else "N/A"
-                cmd_idx = self.act_to_cmd_idx[act_id]
-                cmd_status = "valid" if cmd_idx >= 0 else "invalid"
-                print(f"  Actuator {act_id:2d} -> Joint {j_id:2d} ({j_name:30s}) -> cmd_idx {cmd_idx:2d} ({cmd_status})")
-            if self.model.nu > 10:
-                print(f"  ... ({self.model.nu - 10} more actuators)")
-        
-        # Check that all robot joints have corresponding actuators
-        robot_joints_with_actuators = set()
-        for act_id in range(self.model.nu):
-            j_id = self.act_to_joint_id[act_id]
-            if j_id in self.robot_joint_ids:
-                robot_joints_with_actuators.add(j_id)
-        
-        missing_actuators = set(self.robot_joint_ids) - robot_joints_with_actuators
-        if missing_actuators:
-            print(f"WARNING: {len(missing_actuators)} robot joints have no corresponding actuators:")
-            for j_id in list(missing_actuators)[:5]:
-                j_name = self.model.joint(j_id).name if j_id < self.model.njnt else "N/A"
-                print(f"  Joint {j_id} ({j_name})")
-            valid = False
-        
-        # Check that qpos/qvel addresses are valid
-        max_qpos = self.data.qpos.shape[0]
-        max_qvel = self.data.qvel.shape[0]
-        invalid_qpos = np.any((self.act_qadr < 0) | (self.act_qadr >= max_qpos))
-        invalid_qvel = np.any((self.act_dadr < 0) | (self.act_dadr >= max_qvel))
-        
-        if invalid_qpos:
-            print(f"ERROR: Some qpos addresses are out of range (max: {max_qpos})")
-            valid = False
-        if invalid_qvel:
-            print(f"ERROR: Some qvel addresses are out of range (max: {max_qvel})")
-            valid = False
-        
-        if verbose and valid:
-            print("\n✓ Mapping verification passed")
-        
-        return valid
        
     def _apply_pd_gains(self, cfg, robot_dof_props):
         """Apply proportional-derivative (PD) gains to robot joints."""
@@ -451,67 +336,33 @@ class MujocoSim:
         is_h1 = robot_name in ['h1_inspire', 'h1_2_inspire_cmu', 'h1_inspire_sim']
         is_g1 = robot_name in ['g1', 'g1_dex3_sim']
         
-        # Map cmd from qpos order (joint order) to actuator order
-        cmd_act = self._map_cmd_to_actuator_order(cmd)
-        
-        # Initialize PD gains in actuator order (default values)
-        kp = np.full(self.model.nu, 200)
-        kd = np.full(self.model.nu, 10)
-        
-        # Map hand_indices and body_indices from qpos order to actuator order
-        # Find which actuators correspond to hand joints and body joints
-        hand_act_indices = []
-        body_act_indices = []
-        torso_act_indices = []
-        
-        for act_id in range(self.model.nu):
-            j_id = self.act_to_joint_id[act_id]
-            if j_id in self.hand_indices:
-                hand_act_indices.append(act_id)
-            if j_id in self.body_ids:
-                body_act_indices.append(act_id)
-            if hasattr(self, 'torso_indices') and j_id in self.torso_indices:
-                torso_act_indices.append(act_id)
-        
-        hand_act_indices = np.array(hand_act_indices, dtype=int)
-        body_act_indices = np.array(body_act_indices, dtype=int)
-        torso_act_indices = np.array(torso_act_indices, dtype=int)
+        kp = np.full(self.robot_joint_ids.shape[0], 200)
+        kd = np.full(self.robot_joint_ids.shape[0], 10)
 
         # For GR1, GR1_JAW, GR1_ACE, force the waist joint's roll, pitch, yaw to 0
         if is_gr1:
-            # Set body joint commands to 0 (in qpos order)
             cmd[self.body_ids] = 0
-            # Re-map after modifying cmd
-            cmd_act = self._map_cmd_to_actuator_order(cmd)
-            kp[hand_act_indices] = 80
-            kd[hand_act_indices] = 2
-            if len(torso_act_indices) > 0:
-                kp[torso_act_indices] = 200
-                kd[torso_act_indices] = 3
+            kp[self.hand_indices] = 80
+            kd[self.hand_indices] = 2
+            kp[self.torso_indices] = 200
+            kd[self.torso_indices] = 3
 
         # For H1_inspire, H1_2_inspire_cmu, H1_inspire_sim
         elif is_h1:
-            kp[hand_act_indices] = 20
-            kd[hand_act_indices] = 0.25
-            # Set joint stiffness (this uses joint indices, not actuator indices)
+            kp[self.hand_indices] = 20
+            kd[self.hand_indices] = 0.25
             self.model.jnt_stiffness[self.hand_indices] = 0
             # self.model.jnt_damping[self.hand_indices] = 1
 
         # For G1, G1_dex3_sim: H1 hand gains
         elif is_g1:
-            kp[hand_act_indices] = 20  # H1 hand gains
-            kd[hand_act_indices] = 0.25
-            # Set joint stiffness (this uses joint indices, not actuator indices)
+            kp[self.hand_indices] = 20  # H1 hand gains
+            kd[self.hand_indices] = 0.25
             self.model.jnt_stiffness[self.hand_indices] = 0
 
-        # Apply Joint-space PD control using proper actuator-to-joint mapping
+        # Apply Joint-space PD control
         self.set_torque_servo(np.arange(self.model.nu), 1)
-        
-        # Use actuator-to-joint mapping to correctly index qpos and qvel
-        # cmd_act is now in actuator order, and we use act_qadr/act_dadr to get qpos/qvel addresses
-        err = self.data.qpos[self.act_qadr] - cmd_act
-        derr = self.data.qvel[self.act_dadr]
-        self.data.ctrl[:] = -kp * err - kd * derr
+        self.data.ctrl[self.robot_joint_ids] = -kp*(self.data.qpos[self.robot_joint_ids] - cmd) - kd*self.data.qvel[self.robot_joint_ids]
 
         # Step simulation
         mj.mj_step(self.model, self.data)
@@ -751,26 +602,6 @@ class MujocoSim:
         mj.mjr_readPixels(rgb_img, None, self.viewport, self.context)
             
         return np.flipud(rgb_img)
-    
-    def _map_cmd_to_actuator_order(self, cmd):
-        """
-        Map cmd array from qpos order (joint order) to actuator order.
-        
-        Args:
-            cmd: Command array in qpos order (length = len(robot_joint_ids))
-                cmd[i] corresponds to joint robot_joint_ids[i]
-        
-        Returns:
-            cmd_act: Command array in actuator order (length = model.nu)
-                cmd_act[act_id] is the command for actuator act_id
-        """
-        cmd_act = np.zeros(self.model.nu)
-        for act_id in range(self.model.nu):
-            cmd_idx = self.act_to_cmd_idx[act_id]
-            if cmd_idx >= 0:  # Valid mapping found
-                cmd_act[act_id] = cmd[cmd_idx]
-            # If cmd_idx == -1, actuator doesn't correspond to a robot joint, leave as 0
-        return cmd_act
     
     def set_torque_servo(self, actuator_indices, flag): 
         self.model.actuator_gainprm[actuator_indices, 0] = flag
