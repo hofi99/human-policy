@@ -3,19 +3,19 @@
 
   <default>
     <default class="torso_motor">
-      <joint damping="0.05" armature="0.01" frictionloss="0.2"/>
+      <joint damping="0.05" armature="0.1" frictionloss="0.2"/>
     </default>
     <default class="leg_motor">
-      <joint damping="0.05" armature="0.01" frictionloss="0.2"/>
+      <joint damping="0.05" armature="0.1" frictionloss="0.2"/>
     </default>
     <default class="ankle_motor">
-      <joint damping="0.05" armature="0.01" frictionloss="0.2"/>
+      <joint damping="0.05" armature="0.1" frictionloss="0.2"/>
     </default>
     <default class="arm_motor">
-      <joint damping="0.05" armature="0.01" frictionloss="0.2"/>
+      <joint damping="0.05" armature="0.1" frictionloss="0.2"/>
     </default>
     <default class="wrist_motor">
-      <joint damping="0.05" armature="0.01" frictionloss="0.1"/>
+      <joint damping="0.05" armature="0.1" frictionloss="0.1"/>
     </default>
     
   </default>
@@ -63,7 +63,7 @@
     <body name="pelvis" pos="0 0 0.793" quat="1 0 0 0">
       <inertial pos="0 0 -0.07605" quat="1 0 -0.000399148 0" mass="3.813"
         diaginertia="0.010549 0.0093089 0.0079184" />
-      <joint name="floating_base_joint" type="free" limited="false" actuatorfrclimited="false" />
+      <!-- <joint name="floating_base_joint" type="free" limited="false" actuatorfrclimited="false" /> -->
       <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.2 0.2 0.2 1"
         mesh="pelvis" />
       <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.7 0.7 0.7 1"
