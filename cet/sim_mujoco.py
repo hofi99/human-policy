@@ -422,7 +422,6 @@ class MujocoSim:
         robot_name = self.cfgs[self.cur_env]['name']
 
         if not init_state:# or init_qos is None:
-            head_rot_mat = self._get_safe_head_rot_mat(robot_name)
             if robot_name in ['h1_inspire', 'h1_2_inspire_cmu', 'h1_inspire_sim']:
 
                 # TODO @mh: Remove after testing with neutral position
