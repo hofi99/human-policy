@@ -275,8 +275,74 @@ def fk_cmd_dict2policy(fk_dict, num_timesteps, src='h1_inspire'):
     left_wrist_action = np.concatenate([left_cmds_matrix[:, 0:3, 3], left_rot_6d], axis=1)
     right_wrist_action = np.concatenate([right_cmds_matrix[:, 0:3, 3], right_rot_6d], axis=1)
 
-    left_hand_action = fk_dict['rel_left_hand_keypoints']
-    right_hand_action = fk_dict['rel_right_hand_keypoints']
+    # Get hand keypoints
+    left_hand_keypoints = fk_dict['rel_left_hand_keypoints']
+    right_hand_keypoints = fk_dict['rel_right_hand_keypoints']
+
+    # Reshape to determine format
+    # H1: (1, 18) or (1, 6, 3) → 6 keypoints
+    # G1: (1, 12) or (1, 4, 3) → 4 keypoints
+    if len(left_hand_keypoints.shape) == 2:
+        # 2D: (num_timesteps, N) where N is 18 (H1) or 12 (G1)
+        if left_hand_keypoints.shape[1] == 18:
+            # H1 format: 6 keypoints, use directly
+            left_hand_action = left_hand_keypoints.reshape((-1, 6, 3))
+            right_hand_action = right_hand_keypoints.reshape((-1, 6, 3))
+        elif left_hand_keypoints.shape[1] == 12:
+            # G1 format: 4 keypoints, pad to 6 keypoints to match OUTPUT_LEFT_KEYPOINTS
+            # The 6 keypoints map to RETARGETTING_INDICES = [0, 4, 9, 14, 19, 24] (palm, thumb, index, middle, ring, pinky)
+            # G1 has: palm, thumb, index, middle → pad with zeros for ring and pinky
+            left_hand_4kpt = left_hand_keypoints.reshape((-1, 4, 3))
+            right_hand_4kpt = right_hand_keypoints.reshape((-1, 4, 3))
+            
+            # Pad to 6 keypoints: [palm, thumb, index, middle, zero, zero]
+            # Indices 4 and 5 (ring and pinky) remain zero since G1 doesn't have these fingers
+            left_hand_action = np.zeros((left_hand_4kpt.shape[0], 6, 3))
+            left_hand_action[:, 0] = left_hand_4kpt[:, 0]  # palm → RETARGETTING_INDICES[0] = 0
+            left_hand_action[:, 1] = left_hand_4kpt[:, 1]  # thumb → RETARGETTING_INDICES[1] = 4
+            left_hand_action[:, 2] = left_hand_4kpt[:, 2]  # index → RETARGETTING_INDICES[2] = 9
+            left_hand_action[:, 3] = left_hand_4kpt[:, 3]  # middle → RETARGETTING_INDICES[3] = 14
+            # Indices 4 and 5 remain zero (ring and pinky don't exist for G1)
+            # These will map to RETARGETTING_INDICES[4] = 19 (ring) and RETARGETTING_INDICES[5] = 24 (pinky)
+            # The adapter will merge these zeros, which is correct for G1
+            
+            right_hand_action = np.zeros((right_hand_4kpt.shape[0], 6, 3))
+            right_hand_action[:, 0] = right_hand_4kpt[:, 0]  # palm
+            right_hand_action[:, 1] = right_hand_4kpt[:, 1]  # thumb
+            right_hand_action[:, 2] = right_hand_4kpt[:, 2]  # index
+            right_hand_action[:, 3] = right_hand_4kpt[:, 3]  # middle
+            # Indices 4 and 5 remain zero (ring and pinky don't exist for G1)
+        else:
+            raise ValueError(f"Unexpected hand keypoints shape: {left_hand_keypoints.shape}")
+    elif len(left_hand_keypoints.shape) == 3:
+        # 3D: (num_timesteps, N, 3) where N is 6 (H1) or 4 (G1)
+        if left_hand_keypoints.shape[1] == 6:
+            # H1 format: use directly
+            left_hand_action = left_hand_keypoints
+            right_hand_action = right_hand_keypoints
+        elif left_hand_keypoints.shape[1] == 4:
+            # G1 format: pad to 6 keypoints
+            # The 6 keypoints map to RETARGETTING_INDICES = [0, 4, 9, 14, 19, 24] (palm, thumb, index, middle, ring, pinky)
+            # G1 has: palm, thumb, index, middle → pad with zeros for ring and pinky
+            left_hand_action = np.zeros((left_hand_keypoints.shape[0], 6, 3))
+            left_hand_action[:, 0] = left_hand_keypoints[:, 0]  # palm → RETARGETTING_INDICES[0] = 0
+            left_hand_action[:, 1] = left_hand_keypoints[:, 1]  # thumb → RETARGETTING_INDICES[1] = 4
+            left_hand_action[:, 2] = left_hand_keypoints[:, 2]  # index → RETARGETTING_INDICES[2] = 9
+            left_hand_action[:, 3] = left_hand_keypoints[:, 3]  # middle → RETARGETTING_INDICES[3] = 14
+            # Indices 4 and 5 remain zero (ring and pinky don't exist for G1)
+            # These will map to RETARGETTING_INDICES[4] = 19 (ring) and RETARGETTING_INDICES[5] = 24 (pinky)
+            # The adapter will merge these zeros, which is correct for G1
+            
+            right_hand_action = np.zeros((right_hand_keypoints.shape[0], 6, 3))
+            right_hand_action[:, 0] = right_hand_keypoints[:, 0]  # palm
+            right_hand_action[:, 1] = right_hand_keypoints[:, 1]  # thumb
+            right_hand_action[:, 2] = right_hand_keypoints[:, 2]  # index
+            right_hand_action[:, 3] = right_hand_keypoints[:, 3]  # middle
+            # Indices 4 and 5 remain zero (ring and pinky don't exist for G1)
+        else:
+            raise ValueError(f"Unexpected hand keypoints shape: {left_hand_keypoints.shape}")
+    else:
+        raise ValueError(f"Unexpected hand keypoints shape: {left_hand_keypoints.shape}")
 
     head_action = np.concatenate([0 * head_cmds_matrix[:, 0:3, 3], head_rot_6d], axis=1)  # mask the translation to 0
 

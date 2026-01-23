@@ -7,13 +7,14 @@ import yaml
 import h5py
 import time
 import argparse
+import sys
 import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
 from tqdm import tqdm
 
 import hdt.constants
-from cet.utils_fk import FKCmdDictGenerator, target_task_link_names
+from cet.utils_fk import FKCmdDictGenerator, target_task_link_names as default_target_task_link_names
 from cet.eval_6d import load_policy, get_norm_stats, normalize_input
 
 def _load_hdf5(hdf5_path):
@@ -66,8 +67,8 @@ def process_image(img, original_res=(1280, 720), offset_w=0, resize_width=320, r
     img_cropped = img[crop_size_h:original_height-crop_size_h, crop_size_w+offset_w:original_width-crop_size_w+offset_w]
     img_resized = cv2.resize(img_cropped, (resize_width, resize_height), interpolation=cv2.INTER_AREA)
     img_resized = img_resized.transpose(2, 0, 1)
-    
-    return img_resized   
+
+    return img_resized
 
 def main(args, player, policy_rollout):
     """ Main function to evaluate the policy in the simulator """
@@ -127,6 +128,34 @@ def main(args, player, policy_rollout):
         left_qpos_hand_indices = hdt.constants.H1_QPOS_LEFT_HAND_INDICES
         right_qpos_hand_indices = hdt.constants.H1_QPOS_RIGHT_HAND_INDICES
     
+    # Load target_task_link_names and scaling_factor from config
+    robot_cfg = player.cfgs[player.cur_env]
+    # Config structure: hand.left_hand and hand.right_hand (for G1) or direct left_hand/right_hand (for H1)
+    hand_cfg = robot_cfg.get('hand', {})
+    if hand_cfg:
+        # G1 structure: hand.left_hand and hand.right_hand
+        left_hand_link_names = hand_cfg.get('left_hand', {}).get('target_task_link_names', [])
+        right_hand_link_names = hand_cfg.get('right_hand', {}).get('target_task_link_names', [])
+        left_hand_scales = hand_cfg.get('left_hand', {}).get('scaling_factor', None)
+        right_hand_scales = hand_cfg.get('right_hand', {}).get('scaling_factor', None)
+    else:
+        # H1 structure: direct left_hand and right_hand
+        left_hand_link_names = robot_cfg.get('left_hand', {}).get('target_task_link_names', [])
+        right_hand_link_names = robot_cfg.get('right_hand', {}).get('target_task_link_names', [])
+        left_hand_scales = robot_cfg.get('left_hand', {}).get('scaling_factor', None)
+        right_hand_scales = robot_cfg.get('right_hand', {}).get('scaling_factor', None)
+    
+    # Start with default imported value, override if config has values
+    target_task_link_names = default_target_task_link_names
+    
+    # Combine left and right hand link names if found in config
+    if left_hand_link_names and right_hand_link_names:
+        target_task_link_names = left_hand_link_names + right_hand_link_names
+        print(f"Loaded robot-specific link names: {len(left_hand_link_names)} left + {len(right_hand_link_names)} right = {len(target_task_link_names)} total", flush=True)
+    else:
+        # Fallback to default (already set above)
+        print(f"Warning: target_task_link_names not found in config, using default H1 names", flush=True)
+    
     generator = FKCmdDictGenerator(
         urdf_path, 
         left_arm_indices, 
@@ -139,7 +168,11 @@ def main(args, player, policy_rollout):
         left_qpos_arm_indices=left_qpos_arm_indices,
         right_qpos_arm_indices=right_qpos_arm_indices,
         left_qpos_hand_indices=left_qpos_hand_indices,
-        right_qpos_hand_indices=right_qpos_hand_indices
+        right_qpos_hand_indices=right_qpos_hand_indices,
+        left_hand_scales=left_hand_scales,
+        right_hand_scales=right_hand_scales,
+        left_hand_link_names=left_hand_link_names if left_hand_link_names else None,
+        right_hand_link_names=right_hand_link_names if right_hand_link_names else None
     )
     
     # Launch simulator viewer
@@ -153,62 +186,85 @@ def main(args, player, policy_rollout):
             
         # Main simulation loop
         for t in tqdm(range(end_time)):
-            # Fetch images from simulator and process them
-            cur_left_img = process_image(player.get_camera_image(0))
-            cur_right_img = process_image(player.get_camera_image(1))
-                                
-            if t < ZEROING_LENGTH:
-                print("Initializing: Zeroing position")
-                player.step_init(actions_gt[0], viewer, init_state=True)
-                continue
-            elif t < INIT_FIRST_ACTION_LENGTH:
-                print("Initializing: Mimicking actions")
-                player.step_init(actions_gt[0], viewer)
-                continue
+            try:
+                # Fetch images from simulator and process them
+                cur_left_img = process_image(player.get_camera_image(0))
+                cur_right_img = process_image(player.get_camera_image(1))
+                if t < ZEROING_LENGTH:
+                    print("Initializing: Zeroing position", flush=True)
+                    player.step_init(actions_gt[0], viewer, init_state=True)
+                    continue
+                elif t < INIT_FIRST_ACTION_LENGTH:
+                    print("Initializing: Mimicking actions", flush=True)
+                    player.step_init(actions_gt[0], viewer)
+                    continue
                 
-            # Inference phase: 
-            t_start = t - INIT_FIRST_ACTION_LENGTH
+                # Inference phase: 
+                t_start = t - INIT_FIRST_ACTION_LENGTH
 
-            # Fix GT_TIME to complete the rollout trajectory
-            t_gt = min(t_start, len(actions_gt) - 1)  # Ensures valid index
-            GT_TIME_FIX = GT_TIME_FIX or (t_start >= len(actions_gt))
-                
-            # Extract ground truth data
-            cur_action_gt = actions_gt[t_gt] 
-            cur_left_img_gt = left_imgs[t_gt]
-            cur_right_img_gt  = right_imgs[t_gt]
-            cur_state_gt = states[t_gt]
-            
-            # Fetch qpos from sim and generate FK observations
-            # Extract qpos after body/leg/waist joints (robot-specific offset)
-            cur_state = np.array(player.data.qpos[all_indices][body_offset:]) # 28-dim for G1, 38-dim for H1
-            # NOTE: head_mat is simply masked from training for now.
-            fk_cmd_dict, _, _, _, _, _, _, _ = generator.generate_fk_obs(qpos=cur_state, head_mat=np.zeros((4, 4)), norm_qpos_to_urdf=False)
-
-            if policy_rollout:
-                qpos_data, image_data = normalize_input(fk_cmd_dict[0], cur_left_img, cur_right_img, 
-                                                        norm_stats, visual_preprocessor, match_human=True)
-            
-                # If output is exhausted, generate new predictions
-                if output is None or act_index == chunk_size - 0:
-                    print("Predicted Chunk exhausted at", t_start)
-                    output = policy(image_data, qpos_data)[0].detach().cpu().numpy() # (chuck_size,action_dim)
-                    output = output * norm_stats["action_std"] + norm_stats["action_mean"]
-                    act_index = 0
+                # Fix GT_TIME to complete the rollout trajectory
+                t_gt = min(t_start, len(actions_gt) - 1)  # Ensures valid index
+                GT_TIME_FIX = GT_TIME_FIX or (t_start >= len(actions_gt))
                     
-                # Select current action
-                act = output[act_index]
-                act_index += 1
-            else:
-                act = cur_action_gt
-            
-            if args['plot']:
-                predicted_list.append(act[hdt.constants.OUTPUT_RIGHT_EEF[3:6]])
-                gt_list.append(cur_action_gt[hdt.constants.OUTPUT_RIGHT_EEF[3:6]])
+                # Extract ground truth data
+                cur_action_gt = actions_gt[t_gt] 
+                cur_left_img_gt = left_imgs[t_gt]
+                cur_right_img_gt  = right_imgs[t_gt]
+                cur_state_gt = states[t_gt]
                 
-            # Step the simulator
-            player.step_init(act, viewer)  
-            record_list.append(act)
+                # Fetch qpos from sim and generate FK observations
+                # Extract qpos after body/leg/waist joints (robot-specific offset)
+                all_indices_arr = np.array(all_indices, dtype=np.int32)
+                
+                # Validate indices are within bounds
+                if np.any(all_indices_arr >= len(player.data.qpos)):
+                    raise ValueError(f"Invalid all_indices: some indices >= data.qpos length ({len(player.data.qpos)})")
+                if np.any(all_indices_arr < 0):
+                    raise ValueError(f"Invalid all_indices: some indices < 0")
+                if body_offset >= len(all_indices_arr):
+                    raise ValueError(f"Invalid body_offset ({body_offset}) >= all_indices length ({len(all_indices_arr)})")
+                
+                # Use numpy array indexing instead of list indexing for safety
+                qpos_subset = player.data.qpos[all_indices_arr]
+                cur_state = np.array(qpos_subset[body_offset:], dtype=np.float32) # 28-dim for G1, 38-dim for H1
+                
+                if np.any(np.isnan(cur_state)) or np.any(np.isinf(cur_state)):
+                    raise ValueError(f"cur_state contains NaN or Inf values: {cur_state}")
+                
+                # NOTE: head_mat is simply masked from training for now.
+                fk_cmd_dict, _, _, _, _, _, _, _ = generator.generate_fk_obs(qpos=cur_state, head_mat=np.zeros((4, 4)), norm_qpos_to_urdf=False)
+
+                if policy_rollout:
+                    qpos_data, image_data = normalize_input(fk_cmd_dict[0], cur_left_img, cur_right_img, 
+                                                            norm_stats, visual_preprocessor, match_human=True)
+                
+                    # If output is exhausted, generate new predictions
+                    if output is None or act_index == chunk_size - 0:
+                        print("Predicted Chunk exhausted at", t_start)
+                        output = policy(image_data, qpos_data)[0].detach().cpu().numpy() # (chuck_size,action_dim)
+                        output = output * norm_stats["action_std"] + norm_stats["action_mean"]
+                        act_index = 0
+                        
+                    # Select current action
+                    act = output[act_index]
+                    act_index += 1
+                else:
+                    act = cur_action_gt
+                
+                if args['plot']:
+                    predicted_list.append(act[hdt.constants.OUTPUT_RIGHT_EEF[3:6]])
+                    gt_list.append(cur_action_gt[hdt.constants.OUTPUT_RIGHT_EEF[3:6]])
+                    
+                # Step the simulator
+                player.step_init(act, viewer)
+                record_list.append(act)
+            except Exception as e:
+                print(f"[ERROR t={t}] Exception: {e}", flush=True)
+                import traceback
+                traceback.print_exc()
+                sys.stdout.flush()
+                sys.stderr.flush()
+                raise
         
         # Plot the predicted and ground truth actions
         if args['plot']:

@@ -360,6 +360,12 @@ class MujocoSim:
             kd[self.hand_indices] = 0.25
             self.model.jnt_stiffness[self.hand_indices] = 0
 
+        # Validate data.qpos and data.qvel are valid before accessing
+        if self.data.qpos is None or len(self.data.qpos) != self.model.nq:
+            raise RuntimeError(f"Invalid data.qpos: length {len(self.data.qpos) if self.data.qpos is not None else 'None'} != model.nq {self.model.nq}")
+        if self.data.qvel is None or len(self.data.qvel) != self.model.nv:
+            raise RuntimeError(f"Invalid data.qvel: length {len(self.data.qvel) if self.data.qvel is not None else 'None'} != model.nv {self.model.nv}")
+
         # Apply Joint-space PD control
         self.set_torque_servo(np.arange(self.model.nu), 1)
         self.data.ctrl[self.robot_joint_ids] = -kp*(self.data.qpos[self.robot_joint_ids] - cmd) - kd*self.data.qvel[self.robot_joint_ids]
@@ -416,39 +422,47 @@ class MujocoSim:
         robot_name = self.cfgs[self.cur_env]['name']
 
         if not init_state:# or init_qos is None:
-            # Check if robot uses Dex3 hands (G1 robot)
-            is_dex3_robot = robot_name in ['g1', 'g1_dex3_sim']
-            
+            head_rot_mat = self._get_safe_head_rot_mat(robot_name)
             if robot_name in ['h1_inspire', 'h1_2_inspire_cmu', 'h1_inspire_sim']:
+
+                # TODO @mh: Remove after testing with neutral position
+                #qpos = np.zeros((51,), dtype=np.float32)
+                #return qpos, head_rot_mat
+
                 if action.shape[0] == 128:
                     ctrl_cmd = policy2ctrl_cmd(action[None, :])
                     self.controller.update(*ctrl_cmd)
                     return self.controller.qpos, self.controller.head_rot_mat
-                
+
                 qpos = np.zeros(51)
-                
+
                 # left arm actions
                 qpos[13:20] = action[0:7]
                 # left hand actions
                 qpos[20:22] = action[7] # intermediate joints mimic proximals
-                qpos[22:24] = action[8] 
-                qpos[24:26] = action[9] 
-                qpos[26:28] = action[10] 
+                qpos[22:24] = action[8]
+                qpos[24:26] = action[9]
+                qpos[26:28] = action[10]
                 qpos[28] = action[11] # thumb joints
                 qpos[29:32] = action[12] * np.array([1, 1.6, 2.4])
-                
+
                 # right arm actions
                 qpos[32:39] = action[13:20]
                 # right hand actions
-                qpos[39:41] = action[20] 
+                qpos[39:41] = action[20]
                 qpos[41:43] = action[21]
                 qpos[43:45] = action[22]
                 qpos[45:47] = action[23]
                 qpos[47] = action[24]
                 qpos[48:51] = action[25] * np.array([1, 1.6, 2.4])
                 qpos = np.array(qpos, dtype=np.float32)
-                
+
             elif robot_name in ['gr1_inspire', 'gr1_inspire_sim']:
+
+                # TODO @mh: Remove after testing with neutral position
+                #qpos = np.zeros((56,), dtype=np.float32)
+                #return qpos, head_rot_mat
+
                 if action.shape[0] == 128:
                     ctrl_cmd = policy2ctrl_cmd(action[None, :])
                     self.controller.update(*ctrl_cmd)
@@ -460,8 +474,8 @@ class MujocoSim:
                     qpos[18:25] = action[0:7]
                     # left hand actions
                     qpos[25:27] = action[7] # intermediate joints mimic proximals
-                    qpos[27:29] = action[8] 
-                    qpos[29:31] = action[9] 
+                    qpos[27:29] = action[8]
+                    qpos[29:31] = action[9]
                     qpos[31:33] = action[10] # intermediate joints mimic proximals
                     qpos[33] = action[11] # thumb joints
                     qpos[34:37] = action[12] * np.array([1, 1.6, 2.4])
@@ -469,13 +483,18 @@ class MujocoSim:
                     # right arm actions
                     qpos[37:44] = action[13:20]
                     # right hand actions
-                    qpos[44:46] = action[20] 
+                    qpos[44:46] = action[20]
                     qpos[46:48] = action[21]
                     qpos[48:50] = action[22]
                     qpos[50:52] = action[23]
                     qpos[52] = action[24]
                     qpos[53:56] = action[25] * np.array([1, 1.6, 2.4])
-            elif is_dex3_robot:
+            elif robot_name in ['g1', 'g1_dex3_sim']:
+
+                # TODO @mh: Remove after testing with neutral position
+                #qpos = np.zeros((43,), dtype=np.float32)
+                #return qpos, head_rot_mat
+
                 # G1 robot with Dex3 hands
                 if action.shape[0] == 128:
                     # Use Dex3 adapter to convert Dex5 keypoints to Dex3
@@ -518,17 +537,17 @@ class MujocoSim:
                 init_state = np.zeros((43,))  # G1 has 43 DOF
                 # Left arm: shoulder_pitch=15, shoulder_roll=16, elbow=18
                 init_state[15] = -0.5  # left_shoulder_pitch
-                init_state[16] = 1     # left_shoulder_roll
-                init_state[18] = -2    # left_elbow
+                init_state[16] = 1  # left_shoulder_roll
+                init_state[18] = -2  # left_elbow
                 # Right arm: shoulder_pitch=29, shoulder_roll=30, elbow=32
                 init_state[29] = -0.5  # right_shoulder_pitch
-                init_state[30] = -1    # right_shoulder_roll
-                init_state[32] = -2    # right_elbow
+                init_state[30] = -1  # right_shoulder_roll
+                init_state[32] = -2  # right_elbow
                 qpos = init_state
                 qpos = np.array(qpos, dtype=np.float32)
             else:
                 raise ValueError(f"Unknown robot: {robot_name}")
-            
+
         return qpos, self.controller.head_rot_mat
     
     def step_camera(self, head_rmat):

@@ -57,11 +57,30 @@ class ArmInterface:
         return retargeted_pose
 
 class HandInterface:
-    def __init__(self, urdf_path, hand_indices, target_task_link_names, wrist_link_name):
+    def __init__(self, urdf_path, hand_indices, target_task_link_names, wrist_link_name, scales=None):
         self.hand_indices = hand_indices
+
+        # Store scales for this hand (link_name -> scale mapping)
+        if scales is None:
+            # Fallback to global SCALES_DIC if no scales provided
+            self.scales_dict = SCALES_DIC
+        else:
+            # Build scales dict from provided scales and link names
+            if len(scales) != len(target_task_link_names):
+                raise ValueError(f"scales length ({len(scales)}) doesn't match target_task_link_names length ({len(target_task_link_names)})")
+            self.scales_dict = {link_name: scale for link_name, scale in zip(target_task_link_names, scales)}
 
         self.model = pin.buildModelFromUrdf(str(urdf_path))
         self.dof = self.model.nq
+
+        # Store frame IDs from full model
+        full_model_frame_ids = {}
+        for link_name in target_task_link_names:
+            frame_id = self.model.getFrameId(link_name)
+            if frame_id < self.model.nframes:
+                full_model_frame_ids[link_name] = frame_id
+            else:
+                print(f"Warning: Link {link_name} not found in full model (frame_id={frame_id}, nframes={self.model.nframes})", flush=True)
 
         # lock joints
         locked_joint_ids = list(set(range(self.dof)) - set(self.hand_indices))
@@ -78,31 +97,53 @@ class HandInterface:
             self.model, self.data, self.wrist_link_id
         )
 
-        self.target_task_link_ids = {
-            link_name: self.model.getFrameId(link_name)
-            for link_name in target_task_link_names
-        }
+        # Get frame IDs from reduced model and validate
+        # After buildReducedModel, frame IDs may have changed or frames may not exist
+        valid_target_task_link_ids = {}
+        for link_name in target_task_link_names:
+            frame_id = self.model.getFrameId(link_name)
+            if frame_id < 0 or frame_id >= self.model.nframes:
+                print(f"Warning: Frame ID {frame_id} for link {link_name} is invalid in reduced model (model.nframes={self.model.nframes}). Skipping this link.", flush=True)
+                continue
+            valid_target_task_link_ids[link_name] = frame_id
+        
+        self.target_task_link_ids = valid_target_task_link_ids
+        
+        if len(self.target_task_link_ids) == 0:
+            print(f"WARNING: No valid frame IDs found after buildReducedModel for HandInterface. All {len(target_task_link_names)} target links are invalid.", flush=True)
+            print(f"This may cause issues in compute_all_keypoints. Consider checking the URDF and hand_indices configuration.", flush=True)
+        
+        print(f"HandInterface initialized: {len(self.target_task_link_ids)} valid frames out of {len(target_task_link_names)} requested", flush=True)
 
     def compute_all_keypoints(self, joint_pos: np.ndarray):
-        joint_pos = self.generate_full_qpos(joint_pos)
+        import sys
+        try:
+            joint_pos = self.generate_full_qpos(joint_pos)
 
-        assert joint_pos.shape[0] == self.hand_dof
-        
-        pin.forwardKinematics(self.model, self.data, joint_pos)
-        
-        ee_poses = {}
-        for link_name, frame_id in self.target_task_link_ids.items():
-            oMf: pin.SE3 = pin.updateFramePlacement(self.model, self.data, frame_id)
-            ee_poses[link_name] = oMf.homogeneous
+            assert joint_pos.shape[0] == self.hand_dof
 
-        retargeted_keypoints = self.retarget_keypoints(ee_poses)
+            pin.forwardKinematics(self.model, self.data, joint_pos)
 
-        return retargeted_keypoints
+            ee_poses = {}
+            for link_name, frame_id in self.target_task_link_ids.items():
+                oMf: pin.SE3 = pin.updateFramePlacement(self.model, self.data, frame_id)
+                ee_poses[link_name] = oMf.homogeneous
+            retargeted_keypoints = self.retarget_keypoints(ee_poses)
+
+            return retargeted_keypoints
+        except Exception as e:
+            print(f"[ERROR compute_all_keypoints] Exception: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
+            sys.stdout.flush()
+            sys.stderr.flush()
+            raise
     
     def retarget_keypoints(self, ee_poses):
         retargeted_keypoints = {}
         for link_name, ee_pose in ee_poses.items():
-            scale = SCALES_DIC[link_name]
+            # Use instance scales_dict instead of global SCALES_DIC
+            scale = self.scales_dict.get(link_name, 1.0)  # Default to 1.0 if not found
             ee_position = ee_pose[:3, 3] / scale
             ee_position = (ee_position - self.wrist_link_pose.translation) @ self.wrist_link_pose.rotation
 
@@ -157,7 +198,9 @@ class FKCmdDictGenerator:
                  left_hand_indices: list = None, right_hand_indices: list = None,
                  left_qpos_arm_indices: list = None, right_qpos_arm_indices: list = None,
                  left_qpos_hand_indices: list = None, right_qpos_hand_indices: list = None,
-                 hdf5_timestamps: list=None):
+                 hdf5_timestamps: list=None,
+                 left_hand_scales: list = None, right_hand_scales: list = None,
+                 left_hand_link_names: list = None, right_hand_link_names: list = None):
         self.urdf_path = urdf_path
         self.left_arm_indices = left_arm_indices
         self.right_arm_indices = right_arm_indices
@@ -177,41 +220,87 @@ class FKCmdDictGenerator:
         self.left_arm_interface = ArmInterface(self.urdf_path, self.left_arm_indices, self.left_wrist_name)
         self.right_arm_interface = ArmInterface(self.urdf_path, self.right_arm_indices, self.right_wrist_name)
 
+        # Split target_task_link_names if not already split
+        if left_hand_link_names is None or right_hand_link_names is None:
+            # Assume combined list: first half is left, second half is right
+            mid = len(target_task_link_names) // 2
+            left_hand_link_names = target_task_link_names[:mid]
+            right_hand_link_names = target_task_link_names[mid:]
+
         # for hand
-        self.left_hand_interface = HandInterface(self.urdf_path, self.left_hand_indices, target_task_link_names, self.left_wrist_name)
-        self.right_hand_interface = HandInterface(self.urdf_path, self.right_hand_indices, target_task_link_names, self.right_wrist_name)
+        self.left_hand_interface = HandInterface(
+            self.urdf_path, self.left_hand_indices, left_hand_link_names, 
+            self.left_wrist_name, scales=left_hand_scales
+        )
+        self.right_hand_interface = HandInterface(
+            self.urdf_path, self.right_hand_indices, right_hand_link_names, 
+            self.right_wrist_name, scales=right_hand_scales
+        )
 
     def compute_arm_fk(self, left_qpos: np.ndarray, right_qpos: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        left_ee_pose = self.left_arm_interface.compute_ee_pose(left_qpos)
-        left_position = left_ee_pose[:3, 3]
-        left_rotation = left_ee_pose[:3, :3]
+        import sys
+        try:
+            left_ee_pose = self.left_arm_interface.compute_ee_pose(left_qpos)
 
-        right_ee_pose = self.right_arm_interface.compute_ee_pose(right_qpos)
-        right_position = right_ee_pose[:3, 3]
-        right_rotation = right_ee_pose[:3, :3]
+            left_position = left_ee_pose[:3, 3]
+            left_rotation = left_ee_pose[:3, :3]
 
-        return left_position, left_rotation, right_position, right_rotation
+            right_ee_pose = self.right_arm_interface.compute_ee_pose(right_qpos)
+            right_position = right_ee_pose[:3, 3]
+            right_rotation = right_ee_pose[:3, :3]
+
+            return left_position, left_rotation, right_position, right_rotation
+        except Exception as e:
+            print(f"[ERROR compute_arm_fk] Exception: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
+            sys.stdout.flush()
+            sys.stderr.flush()
+            raise
     
     def compute_hand_fk(self, left_hand_qpos: np.ndarray, right_hand_qpos: np.ndarray, norm_qpos_to_urdf: bool) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray]]:
-        if norm_qpos_to_urdf:
-            left_hand_qpos = convert_hand_actions_back(left_hand_qpos, HAND_LOWER_LIMIT, HAND_UPPER_LIMIT)
-            right_hand_qpos = convert_hand_actions_back(right_hand_qpos, HAND_LOWER_LIMIT, HAND_UPPER_LIMIT)
-        left_hand_ee_pose = self.left_hand_interface.compute_all_keypoints(left_hand_qpos)
-        right_hand_ee_pose = self.right_hand_interface.compute_all_keypoints(right_hand_qpos)
+        import sys
+        try:
+            if norm_qpos_to_urdf:
+                left_hand_qpos = convert_hand_actions_back(left_hand_qpos, HAND_LOWER_LIMIT, HAND_UPPER_LIMIT)
+                right_hand_qpos = convert_hand_actions_back(right_hand_qpos, HAND_LOWER_LIMIT, HAND_UPPER_LIMIT)
+            try:
+                # Store method reference before calling
+                compute_method = getattr(self.left_hand_interface, 'compute_all_keypoints', None)
+                # Call with actual qpos (6 DOF for H1, 7 DOF for G1)
+                left_hand_ee_pose = compute_method(left_hand_qpos)
+            except Exception as e:
+                print(f"[ERROR compute_hand_fk] Exception in left_hand_interface.compute_all_keypoints: {e}", flush=True)
+                import traceback
+                traceback.print_exc()
+                sys.stdout.flush()
+                sys.stderr.flush()
+                raise
 
-        left_hand_ee_position = []
-        left_hand_ee_position.append((0,0,0))
-        for link_name, ee_pose in left_hand_ee_pose.items():
-            if link_name.startswith("L_"):
-                left_hand_ee_position.append(ee_pose[:3, 3])
+            right_hand_ee_pose = self.right_hand_interface.compute_all_keypoints(right_hand_qpos)
+
+            left_hand_ee_position = []
+            left_hand_ee_position.append((0,0,0))  # Palm at index 0
+            for link_name, ee_pose in left_hand_ee_pose.items():
+                # Handle both H1 (L_*) and G1 (left_hand_*) link names
+                if link_name.startswith("L_") or link_name.startswith("left_hand_"):
+                    left_hand_ee_position.append(ee_pose[:3, 3])
         
-        right_hand_ee_position = []
-        right_hand_ee_position.append((0,0,0))
-        for link_name, ee_pose in right_hand_ee_pose.items():
-            if link_name.startswith("R_"):
-                right_hand_ee_position.append(ee_pose[:3, 3])
+            right_hand_ee_position = []
+            right_hand_ee_position.append((0,0,0))  # Palm at index 0
+            for link_name, ee_pose in right_hand_ee_pose.items():
+                # Handle both H1 (R_*) and G1 (right_hand_*) link names
+                if link_name.startswith("R_") or link_name.startswith("right_hand_"):
+                    right_hand_ee_position.append(ee_pose[:3, 3])
 
-        return left_hand_ee_position, right_hand_ee_position
+            return left_hand_ee_position, right_hand_ee_position
+        except Exception as e:
+            print(f"[ERROR compute_hand_fk] Exception: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
+            sys.stdout.flush()
+            sys.stderr.flush()
+            raise
     
     def compute_fk(self, qpos: np.ndarray, norm_qpos_to_urdf: bool) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         # for arm
@@ -314,7 +403,7 @@ class FKCmdDictGenerator:
         fk_cmd_dict["rel_right_hand_keypoints"].append(right_hand_ee_position)
 
         # Convert lists to arrays
-        #! need head input 
+        #! need head input
         fk_cmd_dict["head_mat"] = np.array(head_mat.reshape(1, 4, 4))
         fk_cmd_dict["rel_left_wrist_mat"] = np.array(fk_cmd_dict["rel_left_wrist_mat"])
         fk_cmd_dict["rel_right_wrist_mat"] = np.array(fk_cmd_dict["rel_right_wrist_mat"])
