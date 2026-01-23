@@ -43,7 +43,10 @@ G1_LEFT_ARM_INDICES = [15, 16, 17, 18, 19, 20, 21]
 G1_RIGHT_ARM_INDICES = [29, 30, 31, 32, 33, 34, 35]
 G1_LEFT_HAND_INDICES = [22, 23, 24, 25, 26, 27, 28]
 G1_RIGHT_HAND_INDICES = [36, 37, 38, 39, 40, 41, 42]
-G1_MOTOR_INDICES = [15, 16, 17, 18, 19, 20, 21, 29, 30, 31, 32, 33, 34, 35] # 14 dim
+G1_MOTOR_INDICES = [15, 16, 17, 18, 19, 20, 21,
+    22, 23, 24, 25, 26, 27, 28,
+    29, 30, 31, 32, 33, 34, 35,
+    36, 37, 38, 39, 40, 41, 42] 
 
 # ===== Real-robot Interface (28-dim) after truncating first 15 indices =====
 # G1 QPOS interface is 28-dim (vs H1's 26-dim) because G1 has 7 DOF per hand vs H1's 6 DOF per hand

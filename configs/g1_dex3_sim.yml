@@ -43,13 +43,15 @@ robot_cfg:
   # Waist joint index (first waist joint: waist_yaw)
   waist_index: 12
 
-  # Motor/actuator indices for arm controller only (14 DOF: left arm + right arm, excluding body/legs and hands)
-  # This defines which joints the arm RobotController computes
-  # Body/leg joints (0-14) are controlled separately by body controller
-  # Hand joints (22-28, 36-42) are computed separately by hand controller
-  # Note: In simulation, all 43 actuators (including hands) are controlled via PD control
-  # Hand joints receive different PD gains (kp=20, kd=0.25) and joint stiffness is set to 0 (same as H1)
-  arm_motor_indices: [15, 16, 17, 18, 19, 20, 21, 29, 30, 31, 32, 33, 34, 35]
+  # Upper-body motor indices (H1-compatible: arms + 6 hand joints per side)
+  # Left hand: include thumb0/1/2, middle0/1, index0 (exclude index1)
+  # Right hand: include thumb0/1/2, middle0/1, index0 (exclude index1)
+  arm_motor_indices: [
+    15, 16, 17, 18, 19, 20, 21,
+    22, 23, 24, 25, 26, 27,
+    29, 30, 31, 32, 33, 34, 35,
+    36, 37, 38, 39, 40, 41
+  ]
 
   # Head position for camera/viewer setup (x, y, z relative to robot base)
   # Head is fixed to torso_link via head_joint (fixed joint)
