@@ -1,16 +1,10 @@
 robot_cfg:
-  # Robot name - must match the config filename
   name: g1_dex3_sim
-  
-  # Path to URDF file
+
   urdf_path: g1_dex3_sim/urdf/g1_body29_hand14.urdf
-  
-  # Path to MJCF XML directory - used to load scene files
-  # MuJoCo will look for {tasktype}_scene.xml in this directory
-  # Available scene files: scene_29dof.xml, scene_43dof.xml
+
   xml_path: g1_dex3_sim/
-  
-  # Path to mesh files directory
+
   mesh_path: g1_dex3_sim/meshes/
 
   # Joint indices for all robot joints (43 DOF total: 29 body + 14 hand joints)
@@ -29,7 +23,6 @@ robot_cfg:
   left_arm_indices: [15, 16, 17, 18, 19, 20, 21]
   
   # Left hand joint indices (7 DOF: thumb 0/1/2, middle 0/1, index 0/1)
-  # These joints are included in robot_indices (22-28) for proper indexing in simulation code
   # Joint names: left_hand_thumb_0/1/2_joint, left_hand_middle_0/1_joint, left_hand_index_0/1_joint
   left_hand_indices: [22, 23, 24, 25, 26, 27, 28]
   
@@ -121,7 +114,7 @@ robot_cfg:
       out_lp_alpha: 0.5
 
       # Target link configuration for Dex3 hand (right side)
-      # Note: G1 uses "index" not "ring" - adapter maps Dex5 ring+pinky to this
+      # Note: G1 uses "index" not "ring". Adapter maps Dex5 ring+pinky to this
       target_origin_link_names: [ "right_hand_palm_link", "right_hand_palm_link", "right_hand_palm_link", "right_hand_thumb_2_link", "right_hand_thumb_2_link"]
       target_task_link_names: [ "right_hand_thumb_2_link", "right_hand_middle_1_link", "right_hand_index_1_link", "right_hand_middle_1_link", "right_hand_index_1_link" ]
       
@@ -130,7 +123,6 @@ robot_cfg:
       dex_pilot: [None, None, None, ['<=', 0.015, 1e-4, 200], ['<=', 0.015, 1e-4, 200]]
 
       # Mimic joint configuration (right hand)
-      # If no mimic joints exist in G1 hand, this can be empty
       mimic:
         parent_joints: []
         child_joints: []

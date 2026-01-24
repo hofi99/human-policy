@@ -423,11 +423,6 @@ class MujocoSim:
 
         if not init_state:# or init_qos is None:
             if robot_name in ['h1_inspire', 'h1_2_inspire_cmu', 'h1_inspire_sim']:
-
-                # TODO @mh: Remove after testing with neutral position
-                #qpos = np.zeros((51,), dtype=np.float32)
-                #return qpos, head_rot_mat
-
                 if action.shape[0] == 128:
                     ctrl_cmd = policy2ctrl_cmd(action[None, :])
                     self.controller.update(*ctrl_cmd)
@@ -457,11 +452,6 @@ class MujocoSim:
                 qpos = np.array(qpos, dtype=np.float32)
 
             elif robot_name in ['gr1_inspire', 'gr1_inspire_sim']:
-
-                # TODO @mh: Remove after testing with neutral position
-                #qpos = np.zeros((56,), dtype=np.float32)
-                #return qpos, head_rot_mat
-
                 if action.shape[0] == 128:
                     ctrl_cmd = policy2ctrl_cmd(action[None, :])
                     self.controller.update(*ctrl_cmd)
@@ -489,11 +479,6 @@ class MujocoSim:
                     qpos[52] = action[24]
                     qpos[53:56] = action[25] * np.array([1, 1.6, 2.4])
             elif robot_name in ['g1', 'g1_dex3_sim']:
-
-                # TODO @mh: Remove after testing with neutral position
-                #qpos = np.zeros((43,), dtype=np.float32)
-                #return qpos, head_rot_mat
-
                 # G1 robot with Dex3 hands
                 if action.shape[0] == 128:
                     # Use Dex3 adapter to convert Dex5 keypoints to Dex3
